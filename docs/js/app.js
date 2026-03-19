@@ -6,9 +6,9 @@
 
 // ── Config ─────────────────────────────────────────────────────────
 const CORS_PROXIES = [
+  url => `https://shy-mode-a0b0.mohibamin786.workers.dev/?url=${encodeURIComponent(url)}`,
   url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  url => `https://corsproxy.org/?${encodeURIComponent(url)}`,
 ];
 
 async function corsGet(url) {
