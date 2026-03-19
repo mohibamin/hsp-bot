@@ -5,17 +5,27 @@
 ───────────────────────────────────────────────────────────────── */
 
 // ── Config ─────────────────────────────────────────────────────────
-const CORS_PROXY  = "https://corsproxy.io/?"; // free CORS proxy for Yahoo Finance
+const CORS_PROXIES = [
+  url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url => `https://corsproxy.org/?${encodeURIComponent(url)}`,
+];
+
+async function corsGet(url) {
+  for (const proxy of CORS_PROXIES) {
+    try {
+      const res = await fetch(proxy(url), { signal: AbortSignal.timeout(8000) });
+      if (res.ok) return res;
+    } catch (_) {}
+  }
+  throw new Error(`All CORS proxies failed for: ${url}`);
+}
 
 // Yahoo Finance endpoints
-const YF_CHART = (ticker, range = "1y", interval = "1d") =>
-  CORS_PROXY + encodeURIComponent(
-    `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=${range}&interval=${interval}`
-  );
-const YF_QUOTE = (symbols) =>
-  CORS_PROXY + encodeURIComponent(
-    `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(",")}`
-  );
+const YF_CHART_URL = (ticker, range = "1y", interval = "1d") =>
+  `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=${range}&interval=${interval}`;
+const YF_QUOTE_URL = (symbols) =>
+  `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(",")}`;
 
 // Macro tickers: VIX, 10Y yield, DXY, Gold, Oil, SPY
 const MACRO_TICKERS = {
@@ -111,7 +121,7 @@ function signalClass(s) {
 
 // Fetch Yahoo Finance chart for one ticker → returns { dates[], close[], high[], low[], volume[] }
 async function fetchYFChart(ticker, range = "1y") {
-  const res  = await fetch(YF_CHART(ticker, range));
+  const res  = await corsGet(YF_CHART_URL(ticker, range));
   const json = await res.json();
   const result = json?.chart?.result?.[0];
   if (!result) throw new Error(`No data for ${ticker}`);
@@ -128,7 +138,7 @@ async function fetchYFChart(ticker, range = "1y") {
 
 // Fetch batch quotes for multiple tickers → returns Map<ticker, {price, prevClose}>
 async function fetchYFQuotes(tickers) {
-  const res  = await fetch(YF_QUOTE(tickers));
+  const res  = await corsGet(YF_QUOTE_URL(tickers));
   const json = await res.json();
   const map  = new Map();
   for (const q of json?.quoteResponse?.result ?? []) {
@@ -182,6 +192,11 @@ async function loadStatus() {
     await loadSpyData();
   } catch (e) {
     console.warn("SPY load failed:", e);
+    document.getElementById("spy-price").textContent = "unavailable";
+    document.getElementById("spy-ema").textContent   = "unavailable";
+    document.getElementById("ema-gap").textContent   = "unavailable";
+    document.getElementById("regime-banner").innerHTML =
+      `<span style="color:#ff6b35">⚠ Live data unavailable — Yahoo Finance CORS proxy failed. Try refreshing.</span>`;
   }
 
   document.getElementById("last-refresh").textContent = `Last refresh: ${new Date().toLocaleTimeString()}`;
@@ -781,10 +796,8 @@ async function fetchYahooNews(tickers) {
     // Ticker-based news — tag with sector from WATCHLIST
     ...tickerBatch.map(async ticker => {
       try {
-        const url = CORS_PROXY + encodeURIComponent(
-          `https://query1.finance.yahoo.com/v1/finance/search?q=${ticker}&newsCount=5&quotesCount=0`
-        );
-        const res  = await fetch(url);
+        const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${ticker}&newsCount=5&quotesCount=0`;
+        const res  = await corsGet(url);
         const json = await res.json();
         const category = WATCHLIST[ticker]?.sector ?? ticker;
         (json?.news ?? []).forEach(n => {
@@ -803,10 +816,8 @@ async function fetchYahooNews(tickers) {
     // General market news — tag with query label
     ...queries.map(async ({ q, label }) => {
       try {
-        const url = CORS_PROXY + encodeURIComponent(
-          `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&newsCount=6&quotesCount=0`
-        );
-        const res  = await fetch(url);
+        const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&newsCount=6&quotesCount=0`;
+        const res  = await corsGet(url);
         const json = await res.json();
         (json?.news ?? []).forEach(n => {
           if (!n.title) return;
