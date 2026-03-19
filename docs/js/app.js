@@ -97,6 +97,11 @@ function switchTab(name) {
   if (name === "backtest"    && !_backtestLoaded) loadBacktest();
   if (name === "predictions" && !_newsLoaded)     loadNews();
   if (name === "rl-advisor"  && _spyData)         loadRlAdvisor();
+  if (name === "watchlist") {
+    if (!_signalsLoaded) loadWatchlist();
+    const sel = document.getElementById("stock-select");
+    if (sel?.value) loadStockChart(sel.value);
+  }
 }
 
 // ───────────────────────────────────────────────────────────────────
