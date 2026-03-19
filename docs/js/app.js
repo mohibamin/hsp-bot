@@ -289,8 +289,26 @@ function renderSpyChart(dates, close, ema50Series) {
 // ───────────────────────────────────────────────────────────────────
 //  WATCHLIST SIGNALS  (computed entirely in JS from Yahoo Finance)
 // ───────────────────────────────────────────────────────────────────
+const SIGNALS_CACHE_KEY = "hsp_signals_v2";
+const SIGNALS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 async function loadWatchlist() {
   if (_signalsLoaded) { renderWatchlist(); return; }
+
+  // Try localStorage cache first
+  try {
+    const raw = localStorage.getItem(SIGNALS_CACHE_KEY);
+    if (raw) {
+      const cached = JSON.parse(raw);
+      if (Date.now() - cached.ts < SIGNALS_CACHE_TTL) {
+        _signals = cached.signals;
+        _signalsLoaded = true;
+        Object.assign(_stockDataCache, cached.ohlcv ?? {});
+        finishWatchlist();
+        return;
+      }
+    }
+  } catch (_) {}
 
   const loading = document.getElementById("watchlist-loading");
   loading.style.display = "block";
@@ -298,30 +316,28 @@ async function loadWatchlist() {
 
   const tickers = Object.keys(WATCHLIST);
   const results = [];
-  const BATCH   = 20;
+  let done = 0;
 
-  for (let i = 0; i < tickers.length; i += BATCH) {
-    const batch = tickers.slice(i, i + BATCH);
-    loading.textContent = `Loading signals… ${Math.min(i + BATCH, tickers.length)} / ${tickers.length}`;
-
-    await Promise.all(batch.map(async ticker => {
-      try {
-        const d   = await fetchYFChart(ticker, "1y");
-        const cls = d.close.filter(v => v != null && isFinite(v));
-        if (cls.length < 30) return;
-        _stockDataCache[ticker] = d;   // cache raw OHLCV for RL inference
-        const sig = generateSignal(ticker, cls);
-        results.push({
-          ...sig,
-          company: WATCHLIST[ticker].name,
-          sector:  WATCHLIST[ticker].sector,
-          monitor: MONITOR_LIST.has(ticker),
-          hold: "2–4 wks",
-          hold_rationale: "",
-        });
-      } catch (_) {}
-    }));
-  }
+  // Fetch all in parallel — much faster than sequential batches
+  await Promise.all(tickers.map(async ticker => {
+    try {
+      const d   = await fetchYFChart(ticker, "1y");
+      const cls = d.close.filter(v => v != null && isFinite(v));
+      if (cls.length < 30) return;
+      _stockDataCache[ticker] = d;
+      const sig = generateSignal(ticker, cls);
+      results.push({
+        ...sig,
+        company: WATCHLIST[ticker].name,
+        sector:  WATCHLIST[ticker].sector,
+        monitor: MONITOR_LIST.has(ticker),
+        hold: "2–4 wks",
+        hold_rationale: "",
+      });
+    } catch (_) {}
+    done++;
+    loading.textContent = `Loading signals… ${done} / ${tickers.length}`;
+  }));
 
   // Sort: BUY → HOLD → SELL, then by confidence desc
   const order = { BUY: 0, HOLD: 1, SELL: 2 };
@@ -330,11 +346,24 @@ async function loadWatchlist() {
   _signals = results;
   _signalsLoaded = true;
 
+  // Save to localStorage
+  try {
+    localStorage.setItem(SIGNALS_CACHE_KEY, JSON.stringify({
+      ts: Date.now(), signals: results, ohlcv: _stockDataCache
+    }));
+  } catch (_) {} // ignore if storage full
+
+  finishWatchlist();
+}
+
+function finishWatchlist() {
+  const tickers = Object.keys(WATCHLIST);
+
   // Populate filters
-  const sortedSectors = [...new Set(results.map(r => r.sector).filter(Boolean))].sort();
-  const sectors = ["All", ...sortedSectors];
+  const sortedSectors = [...new Set(_signals.map(r => r.sector).filter(Boolean))].sort();
   const sectorSel = document.getElementById("sector-filter");
-  sectorSel.innerHTML = sectors.map(s => `<option value="${s}"${s === "All" ? " selected" : ""}>${s}</option>`).join("");
+  sectorSel.innerHTML = ["All", ...sortedSectors].map(s =>
+    `<option value="${s}"${s === "All" ? " selected" : ""}>${s}</option>`).join("");
   sectorSel.onchange = filterWatchlist;
   document.querySelectorAll(".signal-filter").forEach(cb => cb.onchange = filterWatchlist);
 
@@ -343,7 +372,7 @@ async function loadWatchlist() {
   stockSel.innerHTML = tickers.sort().map(t => `<option value="${t}">${t}</option>`).join("");
   loadStockChart(tickers[0]);
 
-  loading.style.display = "none";
+  document.getElementById("watchlist-loading").style.display = "none";
   renderWatchlist();
   renderQuickBuyPlanner();
 }
