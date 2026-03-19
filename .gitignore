@@ -1,0 +1,11 @@
+frontend/model.onnx
+models/
+*.zip
+__pycache__/
+*.pkl
+*.pt
+.DS_Store
+logs/
+*.png
+!frontend/favicon.png
+!frontend/logo_small.png

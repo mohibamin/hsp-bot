@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HSP — Halal Stock Predictions</title>
+  <meta name="theme-color" content="#08060b" />
+  <link rel="icon" type="image/x-icon" href="favicon.ico" />
+  <link rel="apple-touch-icon" href="favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
+  <script src="js/watchlist.js"></script>
+  <script src="js/indicators.js"></script>
+  <script src="js/rl_inference.js"></script>
+</head>
+<body>
+
+<!-- ── Disclaimers ─────────────────────────────────────────────── -->
+<div id="disclaimer-halal" class="disclaimer disclaimer-green" style="display:none">
+  <div class="disclaimer-content">
+    <span class="disclaimer-dot green">●</span>
+    <strong>Halal Compliance Notice</strong>
+    All stocks in this tool were verified as Shariah-compliant at the time of training and creation.
+    Company finances and business activities change over time, and a stock's halal status may change accordingly.
+    <strong>Always verify a stock's current status on
+      <a href="https://zoya.finance" target="_blank">Zoya</a>,
+      <a href="https://musaffa.com" target="_blank">Musaffa</a>,
+      or another trusted halal investment guide before making any investment.
+    </strong>
+  </div>
+  <button class="dismiss-btn" onclick="dismissDisclaimer('halal')">✕</button>
+</div>
+
+<div id="disclaimer-invest" class="disclaimer disclaimer-red" style="display:none">
+  <div class="disclaimer-content">
+    <span class="disclaimer-dot red">●</span>
+    <strong>Investment Disclaimer</strong>
+    This tool is provided for informational and educational purposes only. Nothing here constitutes financial advice.
+    All investment decisions, and any resulting profits or losses, are solely your own responsibility.
+    Use this tool at your own discretion.
+  </div>
+  <button class="dismiss-btn" onclick="dismissDisclaimer('invest')">✕</button>
+</div>
+
+<!-- ── Layout ──────────────────────────────────────────────────── -->
+<div class="layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-lockup">
+        <img src="favicon.png" class="logo-icon" alt="HSP logo" />
+        <div class="logo-text">HSP</div>
+      </div>
+      <div class="logo-sub">Halal Stock Predictions · Shariah-compliant · RL-powered</div>
+    </div>
+    <hr class="divider" />
+
+    <!-- Market status -->
+    <div id="market-badge" class="market-badge">
+      <div class="market-badge-title" id="market-badge-title">Loading…</div>
+      <div class="market-badge-sub" id="market-badge-sub"></div>
+    </div>
+    <hr class="divider" />
+
+    <!-- Cash input -->
+    <label class="input-label">Cash to invest ($)</label>
+    <input type="number" id="cash-input" class="cash-input" value="10000" min="100" max="1000000" step="500" />
+    <hr class="divider" />
+
+    <!-- Model status -->
+    <div id="model-status" class="model-status">Checking model…</div>
+    <hr class="divider" />
+
+    <div class="sidebar-footer">
+      <span id="last-refresh">—</span>
+      <button class="btn-secondary" onclick="refreshAll()">↻ Refresh</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- Tab bar -->
+    <nav class="tab-bar">
+      <button class="tab-btn active" data-tab="dashboard"    onclick="switchTab('dashboard')">Dashboard</button>
+      <button class="tab-btn"        data-tab="rl-advisor"   onclick="switchTab('rl-advisor')">RL Advisor</button>
+      <button class="tab-btn"        data-tab="watchlist"    onclick="switchTab('watchlist')">Watchlist</button>
+      <button class="tab-btn"        data-tab="backtest"     onclick="switchTab('backtest')">Backtest</button>
+      <button class="tab-btn"        data-tab="predictions"  onclick="switchTab('predictions')">Predictions</button>
+    </nav>
+
+    <!-- ═══ TAB 1 — DASHBOARD ════════════════════════════════════ -->
+    <section class="tab-panel active" id="tab-dashboard">
+      <h2 class="section-title">Market Overview</h2>
+
+      <div class="metrics-row" id="dashboard-metrics">
+        <div class="metric-card"><div class="metric-label">SPY Price</div><div class="metric-value" id="spy-price">—</div></div>
+        <div class="metric-card"><div class="metric-label">50-Day EMA</div><div class="metric-value" id="spy-ema">—</div><div class="metric-delta" id="spy-ema-delta"></div></div>
+        <div class="metric-card"><div class="metric-label">EMA Gap</div><div class="metric-value" id="ema-gap">—</div><div class="metric-delta" id="ema-gap-delta"></div></div>
+        <div class="metric-card"><div class="metric-label">Stocks Monitored</div><div class="metric-value" id="n-stocks">—</div></div>
+      </div>
+
+      <div id="regime-banner" class="regime-banner"></div>
+
+      <h3 class="subsection-title">SPY — Price vs 50-Day EMA</h3>
+      <div id="spy-chart" class="chart-container"></div>
+
+      <h3 class="subsection-title">Current Signal Snapshot</h3>
+      <p class="caption" id="signals-caption"></p>
+      <button class="btn-primary" id="load-signals-btn" onclick="loadSignalSnapshot()">Load Signals</button>
+      <div id="signal-snapshot" style="display:none">
+        <div class="metrics-row" style="margin-top:16px">
+          <div class="metric-card buy-card"><div class="metric-label">BUY signals</div><div class="metric-value" id="snap-buy">—</div></div>
+          <div class="metric-card hold-card"><div class="metric-label">HOLD signals</div><div class="metric-value" id="snap-hold">—</div></div>
+          <div class="metric-card sell-card"><div class="metric-label">SELL signals</div><div class="metric-value" id="snap-sell">—</div></div>
+        </div>
+        <h4 style="margin:16px 0 8px; color:#ccc;">Top BUY opportunities (rule-based):</h4>
+        <div class="table-wrap" id="snap-table"></div>
+        <p class="caption" id="snap-caption"></p>
+      </div>
+    </section>
+
+    <!-- ═══ TAB 2 — RL ADVISOR ═══════════════════════════════════ -->
+    <section class="tab-panel" id="tab-rl-advisor">
+      <h2 class="section-title">RL Investment Advisor</h2>
+      <p class="caption">Uses the trained PPO model to recommend positions based on today's live market data.</p>
+
+      <div id="rl-bear-banner" class="regime-banner bear" style="display:none"></div>
+      <div id="rl-active-banner" style="display:none">
+        <div id="rl-loading-banner" class="loading-msg" style="display:none"></div>
+      </div>
+
+      <div id="rl-results" style="display:none">
+        <p class="caption" id="rl-method-note"></p>
+        <div class="metrics-row" id="rl-summary-metrics"></div>
+        <h3 class="subsection-title">Recommended Positions</h3>
+        <div class="table-wrap" id="rl-table"></div>
+        <p class="caption" id="rl-monitor-note" style="display:none">⚠️ = borderline Shariah compliance — re-verify at zoya.finance or musaffa.com</p>
+
+        <div class="two-col" style="margin-top:24px">
+          <div>
+            <h3 class="subsection-title">Capital Allocation</h3>
+            <div id="rl-pie-chart" class="chart-container"></div>
+          </div>
+          <div>
+            <h3 class="subsection-title">Position Sizing vs Kelly</h3>
+            <div id="rl-bar-chart" class="chart-container"></div>
+          </div>
+        </div>
+
+        <details class="expander">
+          <summary>How allocation works</summary>
+          <div id="rl-kelly-info" class="expander-body"></div>
+        </details>
+
+        <div class="info-banner">All stocks verified Shariah-compliant (Zoya / AAOIFI Standard No. 21)</div>
+      </div>
+    </section>
+
+    <!-- ═══ TAB 3 — WATCHLIST ════════════════════════════════════ -->
+    <section class="tab-panel" id="tab-watchlist">
+      <h2 class="section-title">Full Watchlist — Live Signals</h2>
+      <p class="caption">Rule-based signals (RSI + MACD + EMA + Bollinger Bands). Refreshes every 5 minutes.</p>
+
+      <div class="filter-row">
+        <div class="filter-group">
+          <label class="input-label">Signal</label>
+          <div class="checkbox-group">
+            <label><input type="checkbox" class="signal-filter" value="BUY" checked> BUY</label>
+            <label><input type="checkbox" class="signal-filter" value="HOLD" checked> HOLD</label>
+            <label><input type="checkbox" class="signal-filter" value="SELL" checked> SELL</label>
+          </div>
+        </div>
+        <div class="filter-group">
+          <label class="input-label">Sector</label>
+          <select id="sector-filter" class="select-input"></select>
+        </div>
+        <div class="filter-group">
+          <label class="input-label">Min confidence: <span id="conf-val">0</span>%</label>
+          <input type="range" id="conf-slider" min="0" max="100" value="0" oninput="document.getElementById('conf-val').textContent=this.value; filterWatchlist()" />
+        </div>
+      </div>
+
+      <div id="watchlist-loading" class="loading-msg">Loading signals for all stocks…</div>
+      <div class="table-wrap" id="watchlist-table" style="display:none"></div>
+      <p class="caption" id="watchlist-caption"></p>
+
+      <!-- Hold rationale -->
+      <details class="expander" id="hold-rationale-expander" style="display:none">
+        <summary id="hold-rationale-title">Hold duration rationale</summary>
+        <div class="expander-body" id="hold-rationale-body"></div>
+      </details>
+
+      <!-- Bear notice -->
+      <div id="wl-bear-notice" class="warn-banner" style="display:none"></div>
+
+      <!-- Quick Buy Planner -->
+      <details class="expander" id="qbp-expander" style="display:none">
+        <summary id="qbp-title">Quick Buy Planner</summary>
+        <div class="expander-body" id="qbp-body"></div>
+      </details>
+
+      <!-- Stock chart -->
+      <hr class="divider" style="margin:24px 0" />
+      <h3 class="subsection-title">Stock Chart</h3>
+      <select id="stock-select" class="select-input" style="width:220px; margin-bottom:12px" onchange="loadStockChart(this.value)"></select>
+      <div id="stock-chart" class="chart-container"></div>
+      <div id="stock-signal-bar" class="signal-bar" style="display:none"></div>
+    </section>
+
+    <!-- ═══ TAB 4 — BACKTEST ══════════════════════════════════════ -->
+    <section class="tab-panel" id="tab-backtest">
+      <h2 class="section-title">Backtest Results — RL Agent vs Rule-Based Bot</h2>
+      <div id="backtest-loading" class="loading-msg">Loading backtest results…</div>
+      <div id="backtest-content" style="display:none">
+        <h3 class="subsection-title">Performance Metrics</h3>
+        <div class="table-wrap" id="backtest-metrics-table"></div>
+        <h3 class="subsection-title" style="margin-top:24px">Portfolio Value Over Time</h3>
+        <div id="backtest-value-chart" class="chart-container"></div>
+        <h3 class="subsection-title" style="margin-top:24px">Drawdown Over Time</h3>
+        <div id="backtest-dd-chart" class="chart-container"></div>
+        <h3 class="subsection-title" style="margin-top:24px">Daily Return Distribution</h3>
+        <div id="backtest-hist-chart" class="chart-container"></div>
+        <p class="caption" id="backtest-caption"></p>
+      </div>
+      <div id="backtest-none" style="display:none" class="info-banner">
+        No backtest results found. Run <code>python rl_backtest.py</code> to generate them.
+      </div>
+    </section>
+
+    <!-- ═══ TAB 5 — PREDICTIONS ══════════════════════════════════ -->
+    <section class="tab-panel" id="tab-predictions">
+      <div style="display:flex; justify-content:space-between; align-items:center">
+        <h2 class="section-title" style="margin:0">Market Predictions — News & Macro Intelligence</h2>
+        <button class="btn-secondary" onclick="loadNews(true)">↻ Refresh</button>
+      </div>
+
+      <div id="news-loading" class="loading-msg" style="margin-top:16px">Fetching live macro data & news…</div>
+      <div id="news-content" style="display:none">
+        <h3 class="subsection-title">Live Macro Indicators</h3>
+        <div id="macro-risk-banner" class="regime-banner"></div>
+        <div id="macro-cards" class="macro-grid"></div>
+        <hr class="divider" style="margin:20px 0" />
+
+        <h3 class="subsection-title">Sector Sentiment from Today's News</h3>
+        <div id="sentiment-chart" class="chart-container"></div>
+        <hr class="divider" style="margin:20px 0" />
+
+        <h3 class="subsection-title">Latest Headlines</h3>
+        <div class="filter-group" style="margin-bottom:12px">
+          <div class="checkbox-group">
+            <label><input type="checkbox" class="sent-filter" value="BULLISH" checked> Bullish</label>
+            <label><input type="checkbox" class="sent-filter" value="SLIGHTLY BULLISH" checked> Slightly Bullish</label>
+            <label><input type="checkbox" class="sent-filter" value="NEUTRAL"> Neutral</label>
+            <label><input type="checkbox" class="sent-filter" value="SLIGHTLY BEARISH" checked> Slightly Bearish</label>
+            <label><input type="checkbox" class="sent-filter" value="BEARISH" checked> Bearish</label>
+          </div>
+        </div>
+        <div id="news-feed"></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
