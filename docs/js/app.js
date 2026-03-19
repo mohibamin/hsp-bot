@@ -14,7 +14,10 @@ const CORS_PROXIES = [
 async function corsGet(url) {
   for (const proxy of CORS_PROXIES) {
     try {
-      const res = await fetch(proxy(url), { signal: AbortSignal.timeout(8000) });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(proxy(url), { signal: controller.signal });
+      clearTimeout(timer);
       if (res.ok) return res;
     } catch (_) {}
   }
