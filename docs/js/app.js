@@ -18,7 +18,7 @@ async function corsGet(url) {
       const timer = setTimeout(() => controller.abort(), 8000);
       const res = await fetch(proxy(url), { signal: controller.signal });
       clearTimeout(timer);
-      if (res.ok) return res;
+      return res; // return any response — let caller check status
     } catch (_) {}
   }
   throw new Error(`All CORS proxies failed for: ${url}`);
@@ -724,15 +724,26 @@ async function loadNews(forceRefresh = false) {
   document.getElementById("news-content").style.display = "none";
 
   try {
-    // Macro indicators — batch quote fetch
+    // Macro indicators — individual chart fetches (v8/chart works reliably)
     const macroTickers = Object.keys(MACRO_TICKERS);
-    const quoteMap     = await fetchYFQuotes(macroTickers);
+    const quoteMap = new Map();
+    await Promise.all(macroTickers.map(async sym => {
+      try {
+        const d = await fetchYFChart(sym, "5d");
+        const closes = d.close.filter(v => v != null && isFinite(v));
+        if (closes.length >= 2) {
+          const price = closes[closes.length - 1];
+          const prev  = closes[closes.length - 2];
+          quoteMap.set(sym, { price, chgPct: (price - prev) / prev * 100 });
+        }
+      } catch (_) {}
+    }));
 
     const macroGrid = document.getElementById("macro-cards");
     macroGrid.innerHTML = macroTickers.map(sym => {
       const meta = MACRO_TICKERS[sym];
       const q    = quoteMap.get(sym);
-      if (!q) return "";
+      if (!q) return `<div class="macro-card"><div class="macro-card-name">${meta.name}</div><div class="macro-card-value" style="color:#555">N/A</div></div>`;
       const chg = q.chgPct;
       let col   = "#aaaaaa";
       if (Math.abs(chg) >= 0.3) col = (meta.good_low ? chg < 0 : chg > 0) ? "#dc143c" : "#ff4d6d";
