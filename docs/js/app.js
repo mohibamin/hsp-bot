@@ -54,6 +54,82 @@ const PLOT_LAYOUT = {
 };
 const PLOT_CONFIG = { displayModeBar: false, responsive: true };
 
+// ── Chart animation helpers ──────────────────────────────────────
+// Line charts: draw the line(s) left to right over ~1.2s
+// Keeps full x data on init so Plotly locks the date axis correctly,
+// starts y as all-null, then reveals values frame by frame.
+function plotLineWithAnim(divId, traces, layout, config, duration = 1200) {
+  const nFrames = 50;
+  const maxLen  = Math.max(...traces.map(t => (t.x ?? t.y ?? []).length));
+
+  // Lock x-axis range + type so it never flickers during animation
+  const xTrace = traces.find(t => t.x?.length > 1);
+  const xRange = xTrace ? [xTrace.x[0], xTrace.x[xTrace.x.length - 1]] : undefined;
+
+  // Lock y-axis range so it doesn't jump as data reveals
+  const allY = traces.flatMap(t => (t.y ?? []).filter(v => v != null && isFinite(v)));
+  const yMin = Math.min(...allY);
+  const yMax = Math.max(...allY);
+  const yPad = (yMax - yMin) * 0.08;
+
+  const fixedLayout = {
+    ...layout,
+    xaxis: { ...layout.xaxis, ...(xRange ? { range: xRange, type: 'date' } : {}) },
+    yaxis: { ...layout.yaxis, range: [yMin - yPad, yMax + yPad] },
+  };
+
+  // Full x present so Plotly sets date axis; y starts all-null (nothing drawn)
+  Plotly.newPlot(
+    divId,
+    traces.map(t => ({
+      ...t,
+      y: t.y ? new Array(t.y.length).fill(null) : undefined,
+      connectgaps: false,
+    })),
+    fixedLayout, config
+  );
+
+  const frameMs = Math.round(duration / nFrames);
+  const frames  = Array.from({ length: nFrames }, (_, i) => {
+    const end = Math.max(1, Math.round(maxLen * (i + 1) / nFrames));
+    return {
+      data: traces.map(t => ({
+        y: t.y
+          ? [...t.y.slice(0, end), ...new Array(t.y.length - end).fill(null)]
+          : undefined,
+      })),
+    };
+  });
+
+  Plotly.addFrames(divId, frames);
+  Plotly.animate(divId, null, {
+    transition: { duration: 0 },
+    frame:      { duration: frameMs, redraw: false },
+  });
+}
+
+// Bar / horizontal-bar charts: bars grow from zero over ~900ms
+function plotBarWithAnim(divId, traces, layout, config, duration = 900) {
+  const isH = traces.some(t => t.orientation === 'h');
+
+  Plotly.newPlot(
+    divId,
+    traces.map(t => ({
+      ...t,
+      x: isH ? (t.x ?? []).map(() => 0) : t.x,
+      y: isH ? t.y : (t.y ?? []).map(() => 0),
+    })),
+    layout, config
+  );
+
+  Plotly.animate(divId, {
+    data: traces.map(t => ({ x: t.x, y: t.y })),
+  }, {
+    transition: { duration, easing: 'cubic-in-out' },
+    frame:      { duration, redraw: true },
+  });
+}
+
 const SENT_COLORS = {
   "BULLISH":          { fg: "#dc143c", bg: "rgba(220,20,60,0.08)" },
   "SLIGHTLY BULLISH": { fg: "#ff4d6d", bg: "rgba(255,77,109,0.08)" },
@@ -272,7 +348,7 @@ function renderSpyChart(dates, close, ema50Series) {
     }
   });
 
-  Plotly.newPlot("spy-chart", [
+  plotLineWithAnim("spy-chart", [
     { x: dates, y: close,       name: "SPY Close", line: { color: "#dc143c", width: 2 }, type: "scatter", mode: "lines" },
     { x: dates, y: ema50Series, name: "50d EMA",   line: { color: "#ff4d6d", width: 2, dash: "dash" }, type: "scatter", mode: "lines" },
   ], {
@@ -515,7 +591,8 @@ async function loadStockChart(ticker) {
       }
     }
 
-    Plotly.newPlot("stock-chart", [
+    chartEl.innerHTML = '';
+    plotLineWithAnim("stock-chart", [
       { x: dates, y: bbU,  line: { width: 0 }, showlegend: false, name: "BB Upper", type: "scatter" },
       { x: dates, y: bbL,  fill: "tonexty", fillcolor: "rgba(220,20,60,0.06)", line: { width: 0 }, name: "Bollinger Bands", type: "scatter" },
       { x: dates, y: cls,  name: "Price",  line: { color: "#dc143c", width: 2.5 }, type: "scatter" },
@@ -648,7 +725,7 @@ async function loadRlAdvisor() {
       const t = i / Math.max(allocated.length - 1, 1);
       return `hsl(${350 - t * 30}, ${80 - t * 20}%, ${45 + t * 15}%)`;
     });
-    Plotly.newPlot("rl-bar-chart", [{
+    plotBarWithAnim("rl-bar-chart", [{
       type: "bar", name: "Alloc %",
       x: barTickers,
       y: allocated.map(r => r.weight_pct),
@@ -723,7 +800,7 @@ function renderBacktest(d) {
   ];
   document.getElementById("backtest-metrics-table").innerHTML = buildTable(["Metric", "RL Agent (PPO)", "Rule-Based Bot"], metrics);
 
-  Plotly.newPlot("backtest-value-chart", [
+  plotLineWithAnim("backtest-value-chart", [
     { x: rl.dates, y: rl.portfolio_vals, name: `RL Agent (+${rl.total_return_pct.toFixed(1)}%)`, line: { color: "#dc143c", width: 2.5 }, type: "scatter" },
     { x: rb.dates, y: rb.portfolio_vals, name: `Rule-Based (+${rb.total_return_pct.toFixed(1)}%)`, line: { color: "#ff4d6d", width: 2.5 }, type: "scatter" },
   ], { ...PLOT_LAYOUT, height: 380, yaxis: { title: "Portfolio Value ($)" },
@@ -732,7 +809,7 @@ function renderBacktest(d) {
 
   const ddRl = rl.drawdown_series.map(v => -(v * 100));
   const ddRb = rb.drawdown_series.map(v => -(v * 100));
-  Plotly.newPlot("backtest-dd-chart", [
+  plotLineWithAnim("backtest-dd-chart", [
     { x: rl.dates.slice(0, ddRl.length), y: ddRl, fill: "tozeroy", fillcolor: "rgba(220,20,60,0.12)",  name: "RL Agent",   line: { color: "#dc143c", width: 1.5 }, type: "scatter" },
     { x: rb.dates.slice(0, ddRb.length), y: ddRb, fill: "tozeroy", fillcolor: "rgba(255,77,109,0.12)", name: "Rule-Based", line: { color: "#ff4d6d", width: 1.5 }, type: "scatter" },
   ], { ...PLOT_LAYOUT, height: 280, yaxis: { title: "Drawdown (%)" } }, PLOT_CONFIG);
@@ -914,7 +991,7 @@ function renderSentimentChart(items) {
   const hover  = sects.map(([k, v]) => `${k}<br>Net score: ${v > 0 ? "+" : ""}${v} (${counts[k]} articles)`);
 
   const chartHeight = Math.max(260, sects.length * 34 + 60);
-  Plotly.newPlot("sentiment-chart", [{
+  plotBarWithAnim("sentiment-chart", [{
     type: "bar", orientation: "h",
     x: vals, y: labels,
     marker: { color: colors },
